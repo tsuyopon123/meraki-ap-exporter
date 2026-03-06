@@ -1,0 +1,11 @@
+services:
+  meraki-ap-exporter:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: meraki-ap-exporter
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "9780:9780"

@@ -106,7 +106,8 @@ class MerakiAPExporter:
             if not network_id:
                 continue
 
-            enabled_ssids = self._safe_get_enabled_ssids(network_id)
+            enabled_ssid_map = self._safe_get_enabled_ssid_map(network_id)
+            network_clients_by_ap = self._load_network_clients_by_ap(network_id)
 
             aps = self.client.get_wireless_devices(network_id)
             for ap in aps:
@@ -124,7 +125,12 @@ class MerakiAPExporter:
                 }
 
                 self._collect_status(labels, statuses.get(serial, ""))
-                self._collect_clients(labels, enabled_ssids, ap_model)
+                self._collect_clients(
+                    labels,
+                    enabled_ssid_map,
+                    ap_model,
+                    network_clients_by_ap.get(serial, []),
+                )
 
                 if self.settings.enable_channel_utilization_metrics:
                     self._safe_collect_with_map(
@@ -162,14 +168,41 @@ class MerakiAPExporter:
         except Exception:
             LOGGER.exception("Metric collection failed for AP %s", labels.get("ap_serial"))
 
-    def _safe_get_enabled_ssids(self, network_id: str) -> list[int]:
+    def _safe_get_enabled_ssid_map(self, network_id: str) -> dict[int, str]:
         try:
-            return self.client.get_network_enabled_ssids(network_id)
+            return self.client.get_network_enabled_ssid_map(network_id)
         except HTTPError as exc:
             LOGGER.warning(
                 "Failed to get enabled SSIDs for network %s: %s", network_id, exc
             )
-            return []
+            return {}
+
+    def _load_network_clients_by_ap(
+        self, network_id: str
+    ) -> dict[str, list[dict[str, Any]]]:
+        lookback_seconds = max(
+            self.settings.scrape_interval_seconds,
+            self.settings.clients_lookback_seconds,
+        )
+        try:
+            rows = self.client.get_network_clients(network_id, lookback_seconds)
+        except Exception:
+            LOGGER.exception("Failed to get network clients for %s", network_id)
+            return {}
+
+        mapped: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            status = str(row.get("status", "")).lower()
+            if status != "online":
+                continue
+            serial = row.get("recentDeviceSerial")
+            if not isinstance(serial, str) or not serial:
+                continue
+            mapped.setdefault(serial, []).append(row)
+
+        return mapped
 
     def _load_channel_utilization_map(
         self, org_id: str, timespan: int, interval: int
@@ -270,7 +303,11 @@ class MerakiAPExporter:
         self.ap_status.labels(**labels).set(1 if status.lower() == "online" else 0)
 
     def _collect_clients(
-        self, labels: dict[str, str], enabled_ssids: list[int], ap_model: str
+        self,
+        labels: dict[str, str],
+        enabled_ssid_map: dict[int, str],
+        ap_model: str,
+        network_clients: list[dict[str, Any]],
     ) -> None:
         path = f"/devices/{labels['ap_serial']}/wireless/clientCountHistory"
         base_params = {
@@ -281,8 +318,12 @@ class MerakiAPExporter:
         self.ap_clients_total.labels(**labels).set(0)
         for band in ["2.4", "5", "6"]:
             self.ap_clients_by_band.labels(**labels, band=band).set(0)
-        for ssid in enabled_ssids:
-            self.ap_clients_by_ssid.labels(**labels, ssid=str(ssid)).set(0)
+        for ssid_name in sorted(set(enabled_ssid_map.values())):
+            self.ap_clients_by_ssid.labels(**labels, ssid=ssid_name).set(0)
+
+        if network_clients:
+            self._collect_clients_from_network_clients(labels, network_clients)
+            return
 
         if ap_model.startswith("CW"):
             self._collect_clients_from_fallback(labels)
@@ -297,10 +338,10 @@ class MerakiAPExporter:
                 band_value = self._latest_value(payload)
                 self.ap_clients_by_band.labels(**labels, band=band).set(band_value)
 
-            for ssid in enabled_ssids:
-                payload = self.client.get(path, params={**base_params, "ssid": ssid})
+            for ssid_number, ssid_name in enabled_ssid_map.items():
+                payload = self.client.get(path, params={**base_params, "ssid": ssid_number})
                 ssid_value = self._latest_value(payload)
-                self.ap_clients_by_ssid.labels(**labels, ssid=str(ssid)).set(ssid_value)
+                self.ap_clients_by_ssid.labels(**labels, ssid=ssid_name).set(ssid_value)
             return
         except HTTPError as exc:
             response = exc.response
@@ -308,6 +349,31 @@ class MerakiAPExporter:
                 raise
 
         self._collect_clients_from_fallback(labels)
+
+    def _collect_clients_from_network_clients(
+        self, labels: dict[str, str], network_clients: list[dict[str, Any]]
+    ) -> None:
+        self.ap_clients_total.labels(**labels).set(float(len(network_clients)))
+
+        band_counts = {"2.4": 0.0, "5": 0.0, "6": 0.0}
+        ssid_counts: dict[str, float] = {}
+
+        for client in network_clients:
+            if not isinstance(client, dict):
+                continue
+
+            band = self._extract_band(client)
+            if band in band_counts:
+                band_counts[band] += 1.0
+
+            ssid_label = self._extract_ssid_label(client)
+            if ssid_label:
+                ssid_counts[ssid_label] = ssid_counts.get(ssid_label, 0.0) + 1.0
+
+        for band, count in band_counts.items():
+            self.ap_clients_by_band.labels(**labels, band=band).set(count)
+        for ssid, count in ssid_counts.items():
+            self.ap_clients_by_ssid.labels(**labels, ssid=ssid).set(count)
 
     def _collect_clients_from_fallback(self, labels: dict[str, str]) -> None:
         fallback_clients = self._fetch_device_clients(labels["ap_serial"])
@@ -375,10 +441,6 @@ class MerakiAPExporter:
         ssid_name = client.get("ssid")
         if isinstance(ssid_name, str) and ssid_name:
             return ssid_name
-
-        ssid_number = client.get("ssidNumber")
-        if isinstance(ssid_number, int):
-            return str(ssid_number)
 
         return None
 

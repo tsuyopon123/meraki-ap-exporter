@@ -115,6 +115,7 @@ ENABLE_PACKET_LOSS_METRICS=false
 
 ADVANCED_METRICS_TIMESPAN_SECONDS=21600
 ORG_METRICS_INTERVAL_SECONDS=3600
+CLIENTS_LOOKBACK_SECONDS=900
 ```
 
 ## 実行
@@ -131,3 +132,4 @@ python src/main.py
 - API負荷を調整したい場合は、`ENABLE_*_METRICS` でメトリクス群を個別に無効化できます。
 - `ADVANCED_METRICS_TIMESPAN_SECONDS` は接続失敗/遅延などの取得窓です。短すぎると空データになりやすいため、6時間（21600秒）以上を推奨します。
 - `ORG_METRICS_INTERVAL_SECONDS` は組織スコープ集計API（チャネル利用率/パケットロス）に使われます。
+- `CLIENTS_LOOKBACK_SECONDS` はクライアント数集計の参照窓です。環境により300秒だと0件になる場合があるため、900秒以上を推奨します。

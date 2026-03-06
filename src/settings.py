@@ -20,6 +20,7 @@ class Settings:
     enable_packet_loss_metrics: bool = False
     advanced_metrics_timespan_seconds: int = 21600
     org_metrics_interval_seconds: int = 3600
+    clients_lookback_seconds: int = 900
 
 
 def _to_bool(value: str | None, default: bool) -> bool:
@@ -57,6 +58,7 @@ def load_settings() -> Settings:
         os.getenv("ADVANCED_METRICS_TIMESPAN_SECONDS", "21600")
     )
     org_metrics_interval_seconds = int(os.getenv("ORG_METRICS_INTERVAL_SECONDS", "3600"))
+    clients_lookback_seconds = int(os.getenv("CLIENTS_LOOKBACK_SECONDS", "900"))
 
     if scrape_interval_seconds < 15:
         raise ValueError("SCRAPE_INTERVAL_SECONDS must be >= 15")
@@ -66,6 +68,8 @@ def load_settings() -> Settings:
         raise ValueError("ADVANCED_METRICS_TIMESPAN_SECONDS must be > 0")
     if org_metrics_interval_seconds <= 0:
         raise ValueError("ORG_METRICS_INTERVAL_SECONDS must be > 0")
+    if clients_lookback_seconds <= 0:
+        raise ValueError("CLIENTS_LOOKBACK_SECONDS must be > 0")
 
     return Settings(
         meraki_api_key=meraki_api_key,
@@ -80,4 +84,5 @@ def load_settings() -> Settings:
         enable_packet_loss_metrics=enable_packet_loss_metrics,
         advanced_metrics_timespan_seconds=advanced_metrics_timespan_seconds,
         org_metrics_interval_seconds=org_metrics_interval_seconds,
+        clients_lookback_seconds=clients_lookback_seconds,
     )

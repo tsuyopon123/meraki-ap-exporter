@@ -21,7 +21,7 @@ class MerakiClient:
                 "X-Cisco-Meraki-API-Key": api_key,
                 "Accept": "application/json",
                 "Content-Type": "application/json",
-                "User-Agent": "meraki-ap-exporter/0.1.0",
+                "User-Agent": "meraki-ap-exporter/0.1.1",
             }
         )
 
@@ -131,6 +131,15 @@ class MerakiClient:
                 aps.append(device)
         return aps
 
+    def get_network_clients(self, network_id: str, timespan: int) -> list[dict[str, Any]]:
+        payload = self.get_paginated(
+            f"/networks/{network_id}/clients",
+            params={
+                "timespan": timespan,
+            },
+        )
+        return [row for row in payload if isinstance(row, dict)]
+
     def get_org_device_statuses(self, org_id: str) -> dict[str, str]:
         statuses = self.get_paginated(f"/organizations/{org_id}/devices/statuses")
         result: dict[str, str] = {}
@@ -142,20 +151,25 @@ class MerakiClient:
         return result
 
     def get_network_enabled_ssids(self, network_id: str) -> list[int]:
+        ssid_map = self.get_network_enabled_ssid_map(network_id)
+        return sorted(ssid_map.keys())
+
+    def get_network_enabled_ssid_map(self, network_id: str) -> dict[int, str]:
         payload = self.get(f"/networks/{network_id}/wireless/ssids")
         if not isinstance(payload, list):
-            return []
+            return {}
 
-        result: list[int] = []
+        result: dict[int, str] = {}
         for row in payload:
             if not isinstance(row, dict):
                 continue
             if row.get("enabled") is False:
                 continue
             number = row.get("number")
-            if isinstance(number, int):
-                result.append(number)
-        return sorted(set(result))
+            name = row.get("name")
+            if isinstance(number, int) and isinstance(name, str) and name.strip():
+                result[number] = name.strip()
+        return result
 
     def get_org_channel_utilization_by_device(
         self, org_id: str, timespan: int, interval: int

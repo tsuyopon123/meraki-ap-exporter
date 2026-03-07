@@ -14,6 +14,13 @@ from settings import Settings
 
 LOGGER = logging.getLogger(__name__)
 
+AP_STATUS_CODES = {
+    "offline": 0,
+    "online": 1,
+    "alerting": 2,
+    "dormant": 3,
+}
+
 
 class MerakiAPExporter:
     def __init__(self, settings: Settings) -> None:
@@ -28,7 +35,7 @@ class MerakiAPExporter:
 
         self.ap_status = Gauge(
             "meraki_ap_up",
-            "AP online status (1=online, 0=otherwise)",
+            "AP status code (offline=0, online=1, alerting=2, dormant=3, unknown=-1)",
             common_labels,
         )
         self.ap_clients_total = Gauge(
@@ -300,7 +307,7 @@ class MerakiAPExporter:
         return mapped
 
     def _collect_status(self, labels: dict[str, str], status: str) -> None:
-        self.ap_status.labels(**labels).set(1 if status.lower() == "online" else 0)
+        self.ap_status.labels(**labels).set(AP_STATUS_CODES.get(status.lower(), -1))
 
     def _collect_clients(
         self,

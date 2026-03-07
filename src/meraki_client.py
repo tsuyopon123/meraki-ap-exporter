@@ -21,7 +21,7 @@ class MerakiClient:
                 "X-Cisco-Meraki-API-Key": api_key,
                 "Accept": "application/json",
                 "Content-Type": "application/json",
-                "User-Agent": "meraki-ap-exporter/0.1.1",
+                "User-Agent": "meraki-ap-exporter/0.1.2",
             }
         )
 
